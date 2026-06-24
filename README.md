@@ -49,8 +49,10 @@ rag_system/
 │   └── API_DOCUMENTATION_V2.md     # API 接口文档
 ├── .env                            # 配置文件
 ├── .env.example                    # 配置示例
-├── main.py                         # 启动脚本
+├── main.py                         # FastAPI 启动脚本
+├── main_mcp.py                     # MCP HTTP 服务启动脚本
 ├── requirements.txt                # Python 依赖
+├── MCP_README.md                   # MCP 服务配置指南
 ├── plan-v2.md                      # V2 方案设计文档
 └── README.md
 ```
@@ -75,17 +77,80 @@ cp .env.example .env
 
 ### 3. 启动服务
 
+#### FastAPI REST API 服务
+
 ```bash
 python main.py
 ```
 
 服务将在 `http://0.0.0.0:8021` 启动（端口可在 `.env` 中配置）。
 
+#### MCP HTTP 服务
+
+```bash
+python main_mcp.py
+```
+
+MCP 服务将在 `http://0.0.0.0:8022` 启动。
+
+自定义端口：
+```bash
+export MCP_PORT=9000
+python main_mcp.py
+```
+
 ### 4. 访问 API 文档
 
+**FastAPI 服务:**
 - **Swagger UI**: http://localhost:8021/docs
 - **ReDoc**: http://localhost:8021/redoc
 - **Health Check**: http://localhost:8021/health
+
+**MCP 服务:**
+- **MCP 端点**: http://localhost:8022/mcp
+- **Health Check**: http://localhost:8022/health
+- **详细配置**: [MCP_README.md](MCP_README.md)
+
+---
+
+## 🔌 MCP HTTP 服务
+
+除了 FastAPI REST API，系统还提供 MCP HTTP 服务，用于与 AI 客户端集成。
+
+### MCP 服务端点
+
+- **服务地址**: http://localhost:8022
+- **MCP 端点**: http://localhost:8022/mcp
+- **传输协议**: Streamable HTTP
+
+### MCP 工具
+
+#### search_knowledge_base
+
+通过 MCP 搜索知识库并生成答案。
+
+**参数**:
+- `query` (必需): 用户查询文本
+- `kb_id` (必需): 知识库 ID（单个或逗号分隔多个）
+- `top_k` (可选): 搜索结果数量
+- `rerank_top_n` (可选): 重排后保留的结果数量
+- `rerank_threshold` (可选): 相关性阈值
+- `temperature` (可选): LLM 温度参数
+
+**配置到 Claude Code**:
+
+在 `.claude/settings.json` 中添加：
+
+```json
+{
+  "mcpServers": {
+    "rag-system": {
+      "url": "http://localhost:8022/mcp",
+      "transport": "http"
+    }
+  }
+}
+```
 
 ---
 
@@ -380,12 +445,35 @@ curl -X POST http://localhost:8021/query/search \
 
 ## 开发
 
+### 启动服务
+
 ```bash
-# 开发模式（热重载）
+# FastAPI 服务（端口 8021）
+python main.py
+
+# MCP HTTP 服务（端口 8022）
+python main_mcp.py
+
+# 同时运行两个服务
+python main.py & python main_mcp.py &
+```
+
+### 开发模式
+
+```bash
+# FastAPI 开发模式（热重载）
 DEBUG=true python main.py
 
 # 生产模式
 DEBUG=false python main.py
+```
+
+### 自定义 MCP 服务端口
+
+```bash
+export MCP_PORT=9000
+export MCP_HOST=127.0.0.1
+python main_mcp.py
 ```
 
 ---
@@ -404,6 +492,7 @@ DEBUG=false python main.py
 - ✅ 分批流控处理（≤100）
 - ✅ Reranker 标准化评分
 - ✅ 溯源标注系统
+- ✅ MCP HTTP 服务支持（Streamable HTTP 传输）
 
 ### V1.0.0
 - 基础入库和查询管线

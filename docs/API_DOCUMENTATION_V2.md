@@ -2,7 +2,8 @@
 
 > 版本: V2.0.0  
 > 更新日期: 2026-06-23  
-> 基础URL: `http://localhost:8021`
+> FastAPI 基础URL: `http://localhost:8021`  
+> MCP 服务基础URL: `http://localhost:8022`
 
 ---
 
@@ -14,6 +15,9 @@
   - [POST /ingest/file](#post-ingestfile)
 - [查询管线接口](#查询管线接口)
   - [POST /query/search](#post-querysearch)
+- [MCP HTTP 服务](#mcp-http-服务)
+  - [MCP 端点](#mcp-端点)
+  - [search_knowledge_base 工具](#search_knowledge_base-工具)
 - [系统接口](#系统接口)
   - [GET /health](#get-health)
   - [GET /](#get-)
@@ -508,6 +512,205 @@ curl -X POST http://localhost:8021/query/search \
 
 ---
 
+## MCP HTTP 服务
+
+RAG System V2 提供基于 MCP (Model Context Protocol) 的 HTTP 服务，用于与 AI 客户端（如 Claude、ChatGPT 等）集成。
+
+### 服务信息
+
+- **服务地址**: `http://localhost:8022`
+- **MCP 端点**: `http://localhost:8022/mcp`
+- **传输协议**: Streamable HTTP
+- **健康检查**: `http://localhost:8022/health`
+
+### 启动 MCP 服务
+
+```bash
+# 使用默认端口 8022
+python main_mcp.py
+
+# 自定义端口
+export MCP_PORT=9000
+python main_mcp.py
+```
+
+### 配置到 Claude Code
+
+在 `.claude/settings.json` 或 `~/.claude/settings.json` 中添加：
+
+```json
+{
+  "mcpServers": {
+    "rag-system": {
+      "url": "http://localhost:8022/mcp",
+      "transport": "http"
+    }
+  }
+}
+```
+
+### MCP 端点
+
+#### POST /mcp
+
+MCP JSON-RPC 2.0 端点，支持以下方法：
+
+- `tools/list` - 列出可用工具
+- `tools/call` - 调用工具
+
+**示例：列出工具**
+
+```bash
+curl -X POST http://localhost:8022/mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/list"
+  }'
+```
+
+**响应**:
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "tools": [
+      {
+        "name": "search_knowledge_base",
+        "description": "Search the RAG knowledge base and generate an answer...",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {"type": "string"},
+            "kb_id": {"type": "string"}
+          },
+          "required": ["query", "kb_id"]
+        }
+      }
+    ]
+  }
+}
+```
+
+---
+
+### search_knowledge_base 工具
+
+通过 MCP 搜索知识库并生成带溯源标注的回答。
+
+#### 参数说明
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `query` | string | ✅ | - | 用户查询文本 |
+| `kb_id` | string | ✅ | - | **知识库ID**<br>- 单个: `kb_finance`<br>- 多个: `kb_finance,kb_hr`<br>（逗号分隔，支持跨库查询） |
+| `top_k` | integer | ❌ | 15 | 每种检索返回的数量 |
+| `rerank_top_n` | integer | ❌ | 15 | Rerank 返回的 top-n 结果数量 |
+| `rerank_threshold` | float | ❌ | 0.1 | 相关性阈值（0-1） |
+| `temperature` | float | ❌ | 0.7 | LLM 生成温度 |
+
+#### 调用示例
+
+**请求**:
+```bash
+curl -X POST http://localhost:8022/mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 2,
+    "method": "tools/call",
+    "params": {
+      "name": "search_knowledge_base",
+      "arguments": {
+        "query": "什么是差旅报销标准?",
+        "kb_id": "kb_finance"
+      }
+    }
+  }'
+```
+
+**响应**:
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "## Answer\n根据财务制度，员工出差可以报销交通费、住宿费和餐饮费...\n\n## Metadata\n- Query: 什么是差旅报销标准?\n- Knowledge Bases: kb_finance\n- Context Chunks Used: 3\n\n## Top Sources\n1. [kb_finance] 财务制度.txt (relevance: 0.8500)\n2. [kb_finance] 差旅规定.txt (relevance: 0.7200)"
+      }
+    ]
+  }
+}
+```
+
+#### 跨知识库查询示例
+
+**请求**:
+```bash
+curl -X POST http://localhost:8022/mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 3,
+    "method": "tools/call",
+    "params": {
+      "name": "search_knowledge_base",
+      "arguments": {
+        "query": "报销流程和工作时间规定",
+        "kb_id": "kb_finance,kb_hr",
+        "top_k": 20,
+        "rerank_threshold": 0.5
+      }
+    }
+  }'
+```
+
+#### MCP 服务特性
+
+1. **Streamable HTTP 传输**
+   - 支持 HTTP/1.1 和 HTTP/2
+   - 支持流式响应（Server-Sent Events）
+   - 可穿越防火墙和代理
+   - 支持负载均衡
+
+2. **与 FastAPI 共享业务逻辑**
+   - MCP 服务和 FastAPI 服务共享 `query_pipeline`
+   - 功能完全一致，只是传输协议不同
+   - FastAPI: RESTful HTTP 接口（端口 8021）
+   - MCP: MCP 协议接口（端口 8022）
+
+3. **完整功能支持**
+   - ✅ 多租户知识库隔离（kb_id）
+   - ✅ 跨库查询（逗号分隔多个 kb_id）
+   - ✅ 标准化语义重排（Reranker）
+   - ✅ 精准溯源标注
+   - ✅ 所有查询参数支持
+
+#### 测试 MCP 服务
+
+使用 MCP Inspector 工具：
+
+```bash
+npx @anthropic-ai/mcp-inspector http://localhost:8022/mcp
+```
+
+健康检查：
+
+```bash
+curl http://localhost:8022/health
+```
+
+预期响应：
+```json
+{"status": "healthy", "service": "rag-system-mcp"}
+```
+
+---
+
 ## 系统接口
 
 ### GET /health
@@ -921,5 +1124,20 @@ Rerank后按 relevance_score 排序:
 报销流程和工作时间规定
 """
 ```
+
+---
+
+## 更新历史
+
+### V2.0.0 (2026-06-23)
+- ✅ 多租户数据隔离（kb_id）
+- ✅ Upsert 自动更新机制
+- ✅ 分批流控处理（≤100）
+- ✅ Reranker 标准化评分
+- ✅ 溯源标注系统
+- ✅ **新增 MCP HTTP 服务**（Streamable HTTP 传输）
+  - 提供 `search_knowledge_base` MCP 工具
+  - 支持 Claude、ChatGPT 等 AI 客户端集成
+  - 默认端口 8022
 
 ---
