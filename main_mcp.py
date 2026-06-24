@@ -12,11 +12,12 @@ import sys
 import os
 from typing import Optional
 from starlette.applications import Starlette
-from starlette.routing import Route, Mount
-from mcp.server import Server
-from mcp.server.streamable_http import streamablehttp_server
-from mcp.types import Tool, TextContent
+from starlette.routing import Route
+from starlette.requests import Request
 from starlette.responses import Response
+from mcp.server import Server
+from mcp.server.streamable_http import StreamableHTTPServerTransport
+from mcp.types import Tool, TextContent
 
 from app.core.config import settings
 from app.pipelines import query_pipeline
@@ -167,15 +168,30 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         )]
 
 
-# Create Starlette app with streamable HTTP transport
-app = Starlette(
-    routes=[
-        Mount("/mcp", app=streamablehttp_server(mcp_server)),
-    ]
-)
+async def handle_mcp_request(request: Request) -> Response:
+    """Handle MCP HTTP requests"""
+    try:
+        # Create transport for each request
+        transport = StreamableHTTPServerTransport(
+            mcp_session_id=None,
+            is_json_response_enabled=False
+        )
+
+        # Handle the request through the transport
+        response = await transport.handle_request(request, mcp_server)
+
+        return response
+
+    except Exception as e:
+        logger.error(f"Error handling MCP request: {str(e)}", exc_info=True)
+        return Response(
+            content=f'{{"error": "{str(e)}"}}',
+            status_code=500,
+            media_type="application/json"
+        )
 
 
-async def health_check(request):
+async def health_check(request: Request) -> Response:
     """Health check endpoint"""
     return Response(
         content='{"status": "healthy", "service": "rag-system-mcp"}',
@@ -183,8 +199,13 @@ async def health_check(request):
     )
 
 
-# Add health check route
-app.routes.append(Route("/health", health_check))
+# Create Starlette app
+app = Starlette(
+    routes=[
+        Route("/mcp", handle_mcp_request, methods=["GET", "POST"]),
+        Route("/health", health_check, methods=["GET"]),
+    ]
+)
 
 
 def main():
